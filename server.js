@@ -1,7 +1,6 @@
 // ⚠️ DEVELOPMENT ONLY - Disable SSL verification
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -13,23 +12,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 👇👇 YAHAN ADD KARO (ROUTES KE START ME)
+// Health check route
 app.get('/', (req, res) => {
-  res.send('🚀 Anime API is running on Railway');
+  res.send('🚀 Anime API is running on vercel');
 });
 
-// baqi saare routes
-app.get('/api/health');
-app.get('/api/search');
-
 const PORT = process.env.PORT || 5000;
-
-// server listen (only for local development)
-if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log('Server running');
-  });
-}
 
 // Export for Vercel
 module.exports = app;
@@ -43,10 +31,60 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false
 });
 
+// Helper function to validate streaming URL
+const isValidStreamingUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  
+  // Check if URL is valid
+  try {
+    const urlObj = new URL(url.startsWith('http') ? url : `https://${url}`);
+    // Accept common streaming domains
+    const validDomains = ['vidsrc', 'embed', 'stream', 'player', 'watch'];
+    return validDomains.some(domain => urlObj.hostname.includes(domain)) || url.includes('embed');
+  } catch {
+    return false;
+  }
+};
+
+// Helper function to clean and validate streaming links
+const cleanStreamingLinks = (data) => {
+  if (!data) return null;
+
+  // Handle different response structures
+  let servers = [];
+  
+  if (data.servers && Array.isArray(data.servers)) {
+    servers = data.servers;
+  } else if (data.links && Array.isArray(data.links)) {
+    servers = data.links;
+  } else if (Array.isArray(data)) {
+    servers = data;
+  }
+
+  // Filter and clean valid servers
+  const validServers = servers
+    .filter(server => {
+      const url = server.watch || server.url || server.embed || server.link;
+      return isValidStreamingUrl(url);
+    })
+    .map(server => ({
+      watch: server.watch || server.url || server.embed || server.link,
+      name: server.name || 'Server',
+      type: server.type || 'embed'
+    }));
+
+  console.log(`✅ Found ${validServers.length} valid streaming servers out of ${servers.length}`);
+
+  return {
+    servers: validServers,
+    total: validServers.length,
+    hasValidLinks: validServers.length > 0
+  };
+};
+
 // Helper function to fetch from API
 const fetchFromAPI = async (endpoint, parameters) => {
   try {
-    // Ensure proper parameter concatenation
     const hasQuestionMark = parameters.startsWith('?');
     const separator = hasQuestionMark ? '&' : '?';
     const cleanParams = hasQuestionMark ? parameters.substring(1) : parameters;
@@ -64,12 +102,6 @@ const fetchFromAPI = async (endpoint, parameters) => {
     });
     
     console.log('✅ Success! Status:', response.status);
-    console.log('📦 Total posts received:', response.data.posts?.length || 0);
-    console.log('📄 Page info:', {
-      current: response.data.current_page,
-      total: response.data.total_pages
-    });
-    
     return response.data;
   } catch (error) {
     console.error('❌ API Error:', error.message);
@@ -83,7 +115,6 @@ const fetchFromAPI = async (endpoint, parameters) => {
 
 // Helper function to organize anime data
 const organizeAnime = (anime) => {
-  // Extract year from release date
   let year = "";
   if (anime.anime_rel_date && anime.anime_rel_date !== "0000-00-00") {
     year = new Date(anime.anime_rel_date).getFullYear().toString();
@@ -164,7 +195,6 @@ app.get('/api/genre', async (req, res) => {
 
   console.log(`🎭 Fetching ${genre} anime - Page: ${page}, Limit: ${limit}`);
   
-  // Use search to filter by genre
   const data = await fetchFromAPI('anime/search.php', `keyword=${genre}&limit=${limit}&page=${page}`);
   
   if (!data) {
@@ -248,7 +278,7 @@ app.get('/api/episodes/:seasonId', async (req, res) => {
   res.json(episodes);
 });
 
-// Get Episode Links
+// Get Episode Links - IMPROVED WITH VALIDATION
 app.get('/api/episode/:episodeId/links', async (req, res) => {
   const { episodeId } = req.params;
   
@@ -258,12 +288,27 @@ app.get('/api/episode/:episodeId/links', async (req, res) => {
   
   if (!data) {
     console.error('❌ Episode links not found for ID:', episodeId);
-    return res.status(404).json({ error: 'Episode links not found' });
+    return res.status(404).json({ 
+      error: 'Episode links not found',
+      servers: [],
+      hasValidLinks: false
+    });
   }
 
-  console.log('✅ Episode links found');
-  console.log('📊 Servers available:', data.servers?.length || 0);
-  res.json(data);
+  // Clean and validate streaming links
+  const cleanedData = cleanStreamingLinks(data);
+  
+  if (!cleanedData.hasValidLinks) {
+    console.warn('⚠️ No valid streaming links found for episode:', episodeId);
+    return res.status(404).json({
+      error: 'No valid streaming sources available',
+      servers: [],
+      hasValidLinks: false
+    });
+  }
+
+  console.log('✅ Episode links validated and cleaned');
+  res.json(cleanedData);
 });
 
 // Get Popular Anime
@@ -297,7 +342,6 @@ app.get('/api/series', async (req, res) => {
   
   let params = `sort=new&type=tv&page=${page}&limit=${limit}`;
   
-  // Add status filter if provided
   if (status === 'ongoing') {
     params += '&status=ongoing';
   } else if (status === 'completed') {
@@ -364,7 +408,7 @@ app.get('/api/random', async (req, res) => {
   res.json(response);
 });
 
-// Get Movie Links
+// Get Movie Links - IMPROVED WITH VALIDATION
 app.get('/api/movie/:slug/links', async (req, res) => {
   const { slug } = req.params;
   
@@ -374,12 +418,27 @@ app.get('/api/movie/:slug/links', async (req, res) => {
   
   if (!data) {
     console.error('❌ Movie links not found for slug:', slug);
-    return res.status(404).json({ error: 'Movie links not found' });
+    return res.status(404).json({ 
+      error: 'Movie links not found',
+      servers: [],
+      hasValidLinks: false
+    });
   }
 
-  console.log('✅ Movie links found');
-  console.log('📊 Servers available:', data.servers?.length || data.links?.length || 0);
-  res.json(data);
+  // Clean and validate streaming links
+  const cleanedData = cleanStreamingLinks(data);
+  
+  if (!cleanedData.hasValidLinks) {
+    console.warn('⚠️ No valid streaming links found for movie:', slug);
+    return res.status(404).json({
+      error: 'No valid streaming sources available',
+      servers: [],
+      hasValidLinks: false
+    });
+  }
+
+  console.log('✅ Movie links validated and cleaned');
+  res.json(cleanedData);
 });
 
 // Get Recently Added
@@ -404,28 +463,25 @@ app.get('/api/recent', async (req, res) => {
   res.json(response);
 });
 
-// Get All Content (Series + Movies + Popular) for filtering
+// Get All Content
 app.get('/api/all-content', async (req, res) => {
   const { page = 1, limit = 50 } = req.query;
   
   try {
     console.log(`🔄 Fetching all content - Page: ${page}, Limit: ${limit}`);
     
-    // Fetch different types of content
     const [seriesData, moviesData, popularData] = await Promise.all([
       fetchFromAPI('anime/test.php', `sort=new&type=tv&page=${page}&limit=${limit}`),
       fetchFromAPI('anime/test.php', `type=movie&sort=new&page=${page}&limit=${limit}`),
       fetchFromAPI('anime/test.php', `sort=popular&page=${page}&limit=${limit}`)
     ]);
     
-    // Combine all posts
     const allPosts = [
       ...(seriesData?.posts || []),
       ...(moviesData?.posts || []),
       ...(popularData?.posts || [])
     ];
     
-    // Remove duplicates based on anime_id
     const uniquePosts = Array.from(
       new Map(allPosts.map(item => [item.anime_id, item])).values()
     );
@@ -460,7 +516,6 @@ app.get('/api/ongoing', async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch data' });
   }
 
-  // Filter for ongoing anime (where complete date is null or future)
   const ongoingAnime = data.posts ? data.posts.filter(anime => {
     return !anime.anime_com_date || anime.anime_com_date === "0000-00-00";
   }) : [];
@@ -487,7 +542,6 @@ app.get('/api/completed', async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch data' });
   }
 
-  // Filter for completed anime
   const completedAnime = data.posts ? data.posts.filter(anime => {
     return anime.anime_com_date && anime.anime_com_date !== "0000-00-00";
   }) : [];
@@ -512,7 +566,7 @@ app.get('/api/stats', async (req, res) => {
     ]);
 
     const stats = {
-      total_anime: (popularData?.total_pages || 0) * 12, // Estimate
+      total_anime: (popularData?.total_pages || 0) * 12,
       total_series: (seriesData?.total_pages || 0) * 12,
       total_movies: (moviesData?.total_pages || 0) * 12,
       timestamp: new Date().toISOString()
@@ -542,9 +596,10 @@ app.use((req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`
+// Start server (only for local development)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   🚀 ANIME API SERVER RUNNING                                ║
@@ -553,6 +608,7 @@ app.listen(PORT, () => {
 ║   Status: ✅ ONLINE                                           ║
 ║   Environment: DEVELOPMENT                                    ║
 ║   ⚠️  SSL Verification: DISABLED (Development Only)           ║
+║   ✨ Streaming Link Validation: ENABLED                       ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 
@@ -580,8 +636,8 @@ app.listen(PORT, () => {
    GET  /api/anime/:slug
    GET  /api/anime/:id/seasons
    GET  /api/episodes/:seasonId
-   GET  /api/episode/:episodeId/links
-   GET  /api/movie/:slug/links
+   GET  /api/episode/:episodeId/links   ✨ Validated
+   GET  /api/movie/:slug/links          ✨ Validated
 
 ════════════════════════════════════════════════════════════════
 
@@ -590,5 +646,6 @@ app.listen(PORT, () => {
 🔧 Ready to handle requests!
 
 ════════════════════════════════════════════════════════════════
-  `);
-});
+    `);
+  });
+}
