@@ -641,7 +641,7 @@ if (require.main === module) {
 
 ════════════════════════════════════════════════════════════════
 
-🌐 Server URL: http://localhost:${PORT}
+🌐 Server URL: http://backend-verscel${PORT}
 📝 Logs are enabled for all requests
 🔧 Ready to handle requests!
 
