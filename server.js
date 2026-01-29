@@ -1,5 +1,8 @@
-// ⚠️ DEVELOPMENT ONLY - Disable SSL verification
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// ✅ FIXED: SSL bypass only in development
+if (process.env.NODE_ENV === 'development') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  console.warn('⚠️  SSL verification disabled (DEVELOPMENT ONLY)');
+}
 
 const express = require('express');
 const cors = require('cors');
@@ -28,7 +31,7 @@ const API_KEY = 'deadtoonszylith';
 
 // Create HTTPS agent that ignores self-signed certificates
 const httpsAgent = new https.Agent({
-  rejectUnauthorized: false
+  rejectUnauthorized: process.env.NODE_ENV !== 'development' // ✅ FIXED: Only bypass in dev
 });
 
 // Helper function to validate streaming URL
@@ -278,7 +281,7 @@ app.get('/api/episodes/:seasonId', async (req, res) => {
   res.json(episodes);
 });
 
-// Get Episode Links - IMPROVED WITH VALIDATION
+// Get Episode Links - VALIDATED
 app.get('/api/episode/:episodeId/links', async (req, res) => {
   const { episodeId } = req.params;
   
@@ -291,19 +294,21 @@ app.get('/api/episode/:episodeId/links', async (req, res) => {
     return res.status(404).json({ 
       error: 'Episode links not found',
       servers: [],
-      hasValidLinks: false
+      hasValidLinks: false,
+      total: 0
     });
   }
 
   // Clean and validate streaming links
   const cleanedData = cleanStreamingLinks(data);
   
-  if (!cleanedData.hasValidLinks) {
+  if (!cleanedData || !cleanedData.hasValidLinks) {
     console.warn('⚠️ No valid streaming links found for episode:', episodeId);
     return res.status(404).json({
       error: 'No valid streaming sources available',
       servers: [],
-      hasValidLinks: false
+      hasValidLinks: false,
+      total: 0
     });
   }
 
@@ -408,7 +413,7 @@ app.get('/api/random', async (req, res) => {
   res.json(response);
 });
 
-// Get Movie Links - IMPROVED WITH VALIDATION
+// Get Movie Links - VALIDATED
 app.get('/api/movie/:slug/links', async (req, res) => {
   const { slug } = req.params;
   
@@ -421,19 +426,21 @@ app.get('/api/movie/:slug/links', async (req, res) => {
     return res.status(404).json({ 
       error: 'Movie links not found',
       servers: [],
-      hasValidLinks: false
+      hasValidLinks: false,
+      total: 0
     });
   }
 
   // Clean and validate streaming links
   const cleanedData = cleanStreamingLinks(data);
   
-  if (!cleanedData.hasValidLinks) {
+  if (!cleanedData || !cleanedData.hasValidLinks) {
     console.warn('⚠️ No valid streaming links found for movie:', slug);
     return res.status(404).json({
       error: 'No valid streaming sources available',
       servers: [],
-      hasValidLinks: false
+      hasValidLinks: false,
+      total: 0
     });
   }
 
@@ -606,8 +613,8 @@ if (require.main === module) {
 ║                                                               ║
 ║   Port: ${PORT}                                               
 ║   Status: ✅ ONLINE                                           ║
-║   Environment: DEVELOPMENT                                    ║
-║   ⚠️  SSL Verification: DISABLED (Development Only)           ║
+║   Environment: ${process.env.NODE_ENV || 'DEVELOPMENT'}                              
+║   ${process.env.NODE_ENV === 'development' ? '⚠️  SSL Verification: DISABLED (Development Only)' : '✅ SSL Verification: ENABLED'}           
 ║   ✨ Streaming Link Validation: ENABLED                       ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -641,7 +648,7 @@ if (require.main === module) {
 
 ════════════════════════════════════════════════════════════════
 
-🌐 Server URL: http://backend-verscel${PORT}
+🌐 Server URL: http://localhost:${PORT}
 📝 Logs are enabled for all requests
 🔧 Ready to handle requests!
 
